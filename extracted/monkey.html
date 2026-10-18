@@ -1,0 +1,425 @@
+<HTML>
+<PRE>
+<A NAME="#monkey_top">
+<B>MONKEY 1.02 (12/16/02)</B>
+  a Winamp visualization plug-in by Ryan Geiss
+  copyright (c) 2002 Nullsoft, Inc.
+  Monkey Homepage: <A HREF="http://www.nullsoft.com/free/monkey/">http://www.nullsoft.com/free/monkey/</A>
+  Support Forum: <A HREF="http://forums.winamp.com/forumdisplay.php?forumid=150">http://forums.winamp.com/forumdisplay.php?forumid=150</A>
+
+
+<B>What is Monkey?</B>
+-----------------------
+Monkey is a 3D-accelerated Winamp visualization plug-in 
+that takes you on a psychedelic journey through a
+never-ending network of underground passageways.
+
+
+
+<B>Section Listing</B>
+-----------------------
+    1. <A HREF="#req">requirements</A>
+    2. <A HREF="#inst">installation</A>
+    3. <A HREF="#tweak">tweaking</A>
+    4. <A HREF="#usage">usage</A>
+    5. <A HREF="#3d">using 3D glasses</A>
+    6. <A HREF="#ts">TROUBLESHOOTING</A>
+    7. <A HREF="#ki">known issues</A>
+    8. <A HREF="#linein">using line-in</A> (for live shows, etc.)
+    9. <A HREF="#other">other tips</A>
+    10.<A HREF="#verhist">version history</A>
+
+
+
+<A NAME="#req">
+<B>1. Requirements</B>
+-----------------------
+    Required:
+      * Hardware-based 3D graphics acceleration (i.e. a video card with 3D support)
+      * <A HREF="http://www.microsoft.com/windows/directx/">DirectX 8.0 or later</A> 
+      * <A HREF="http://classic.winamp.com/">Winamp 2.72</A> or later
+            (or <A HREF="http://www.winamp.com/">Winamp 3</A> with the <A HREF="http://www.winamp.com/components3/detail.jhtml?componentId=122130">Classic Visualization Component</A> installed)
+      * Windows 98/ME/2000/XP/etc.
+
+    Recommended:    
+      * A 500+ MHz processor 
+      * A decent 3D graphics card (TNT2 minimum; GeForce 2 recommended)
+
+
+
+<A NAME="#inst">
+<B>2. Installation</B>
+-----------------------
+    Monkey can be installed to Winamp 2 or 3 (or both, but you'd have
+    to run the installer twice).  
+
+    To install to Winamp 3, just run the installer as usual.  Then
+    launch Winamp 3 and hit CTRL+P to load the Preferences screen.
+    Then, on the left, scroll down to 'ClassicVis' and select it.  
+    (If you don't see it, you probably need to download the
+    <A HREF="http://www.winamp.com/components3/detail.jhtml?componentId=122130">Classic Visualization Component</A>).  Now you should see a list 
+    of visualization plugins on the right; select Monkey, and click 
+    'start' to run it.
+
+    To install to Winamp 2, run the installer as usual, but note that
+    if you also have Winamp 3 installed, you'll have to manually
+    choose the Winamp 2 directory, since it installs to Winamp 3
+    by default.  Once the installation is complete, launch Winamp 2 
+    and hit CTRL+P to load the Preferences screen.  Select 'visualization' 
+    under 'plug-ins' on the left.  Now you should see a list of 
+    visualization plugins on the right; select Monkey, and click 
+    'start' to run it.  In the future, you can use the shortcut key 
+    CTRL+SHIFT+K to run Monkey, and ALT+K to configure it.
+
+
+
+<A NAME="#tweak">
+<B>3. Tweaking</B>
+-----------------------
+    For the smoothest animation, you need to configure Monkey
+    so that there is no frame skipping.  To do this, the
+    monitor's refresh rate must be an integer multiple of the 
+    'maxi framerate' that you allow Monkey to run at.
+
+    For example, if your monitor is running at 75 Hz (meaning that
+    it refreshes the image 75 times per second), then you would 
+    want to select one of the following values for the 'max 
+    framerate' option:
+
+        1, 3, 5, 15, 25, 75
+
+    These values are optimal because they evenly divide into the
+    refresh rate of the monitor, and that means that each image
+    (frame) that is sent to the video card will be displayed
+    for a consistent number of refresh cycles on the monitor.  
+    Otherwise, one frame might get shown for 4 refreshes, then
+    the next one for just 3, and so on.
+
+    Your monitor's refresh rate is configurable, and whatever
+    you have it normally set to in Windows is what it will be
+    when you go to run Monkey in Windowed or Fake Fullscreen
+    modes.  To view or change it, go to Start->Settings->Control
+    Panel->Display->Settings tab->Advanced->Monitor tab.
+
+    When you run Monkey in Fullscreen mode, though, the refresh 
+    rate changes (along with the display mode) to whatever you 
+    selected in the Monkey config panel, in the 'Display Mode' 
+    box (in the 'Fullscreen' section).
+
+    Here are the optimal maximum framerates for some other common 
+    monitor refresh rates:
+
+       REFRESH   OPTIMAL FRAMERATES
+       -------   ------------------
+        60 Hz     1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60
+        66 Hz     1, 2, 3, 6, 11, 22, 33, 66
+        70 Hz     1, 2, 5, 7, 10, 14, 35, 70
+        72 Hz     1, 2, 3, 4, 6, 8, 9, 12, 18, 24, 36, 72
+        75 Hz     1, 3, 5, 15, 25, 75
+        85 Hz     1, 5, 17, 85
+        100 Hz    1, 2, 4, 5, 10, 20, 25, 50, 100
+        120 Hz    1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 40, 60, 120
+
+    LCD'S AND LAPTOPS
+    -----------------
+    Note that many LCD flatpanel displays (including laptops) run 
+    natively at one refresh rate ONLY - usually 60 Hz - even though 
+    the display driver might provide other options besides this.  
+    So, if you have an LCD, it's best to keep it running in 60 Hz 
+    at ALL times (or whatever its native refresh rate is).
+
+
+
+<A NAME="#usage">
+<B>4. Usage</B>
+-----------------------
+    Hit 'F1' while Monkey is running to display a list of 
+    accelerator keys.  These will let you display the current
+    framerate, change tracks, browse the playlist, control
+    the animation, and so on.
+
+        ESC exit monkey
+    
+        F1   show/hide help
+        F2   show/hide song title
+        F3   show/hide song length     
+        F4   show/hide info
+        F5   show/hide framerate
+        F6   cycle through 3D modes (none, red-blue stereo, chromatek/chromadepth)
+        F8   toggle high quality mesh
+        ALT+D: toggle Desktop Mode
+        ALT+ENTER: toggle fullscreen
+        SCROLL LOCK: lock scene
+
+        ##: load state from slot 00-99
+        M##: save state to slot 00-99
+        BACKSPACE: reset digit (##) entry
+
+        W    toggle wireframe
+        U     toggle 'undergroundness' of the wires
+        F    toggle flat shading
+        E     toggle shading errors
+        G    toggle fog
+        D    toggle darkness
+        T    toggle textures
+        H    toggle hair
+        O    toggle beat responses
+        j/J  adjust beat det. sensitivity
+        k/K  adjust beat response amplitude
+        q/Q  adjust field of view
+        l/L  adjust hair length
+        +/-  adjust travel speed
+        y/Y: adjust stereo 3D separation
+        r    randomize scene
+        R    ...and render style
+        PGUP/PGDN: roll camera
+    
+        ZXCVB    prev/play/pause/stop/next 
+        P        show/hide playlist            
+        S        toggle shuffle                
+        up/down arrows: adjust vol.      
+        left/right arrows: seek; hold SHIFT for fast seek
+
+
+
+<A NAME="#3d">
+<B>5. Using 3D glasses</B>
+-----------------------
+    Monkey normally renders one regularly-colored image; you see this image
+    with both eyes, and it looks like a flat image of a 3D scene, painted
+    onto your monitor.  If you pause the song ('c') and look at the image,
+    you'll notice that the depth is harder to see without motion.
+
+    However, Monkey can render itself in true 3D, where each of your eyes
+    sees a different image, creating a good illusion that the underground
+    tunnels are physically nestled inside your monitor.
+
+    There are two ways to do this; pressing F6 once will put you in the 
+    first 3D mode (red-blue stereo 3D), and pressing it again will put you
+    in the second 3D mode (chromadepth).  Pressing F6 a third time will
+    take you back out of 3D mode.
+
+    The first mode requires a cheap pair of paper glasses with differently-
+    colored lenses.  By default, the lens colors are assumed to be red for
+    the right eye, and blue for the left eye, but you can change this from
+    the config panel (sometimes the red/blue are swapped, and sometimes you
+    see green + magenta glasses).  You can get these glasses for free from:
+        [ http://www.rainbowsymphony.com/freestuff.html ]
+    This style of 3D creates an accurate illusion of depth, but unfortunately, 
+    doesn't preserve all the color in the image, and doesn't look good without
+    the glasses.
+
+    The second mode requires more hi-tech (but still cheap) glasses.  These
+    glasses are clear, but they are slightly refractive, and their magic
+    comes from the fact that they refract red, green, and blue light 
+    different amounts, horizontally.  This creates the illusion that red
+    objects (when viewed through the glasses) are closest, green in the middle,
+    and blue the farthest.  You can order these glasses online for a few bucks:
+        [ http://www.chromatek.com/ ]
+    This style of 3D creates a 'hacked', but decent, illusion of depth, but
+    is nice because it the image is still very colorful.  Whatsmore, the image
+    still looks good for anyone viewing without the glasses.
+
+    When running in 3D mode, you might also want to tweak the amount of stereo
+    separation, using the 'y' and 'Y' keys.  (Press F4 to get a reading on the
+    current value.)  Usually, a value of ~1.0 ( the default) is good for viewing
+    on a monitor.  On a projector, higher values will be good (~1.4 or so).
+
+
+
+<A NAME="#ts">
+<B>6. TROUBLESHOOTING</B>
+-----------------------
+    If Monkey fails to initialize or freezes while running, try the 
+    following steps to resolve the problem.  In 90% of cases the 
+    problem can be fixed.
+
+    1)  Make sure you have the latest version of <A HREF="http://www.microsoft.com/directx/download.asp">Microsoft DirectX</A>
+        (8.1 at the time this documentation was written).  Even if 
+        you already have it, consider re-installing it, since files 
+        can be corrupted over time, and because poorly-written video 
+        drivers can sometimes break your DirectX installation.
+    
+    2)  Update your video driver, or try other drivers.  A "driver" 
+        is a piece of software that translates graphics-related commands 
+        from programs, like Monkey, into the native language of your 
+        specific graphics hardware.
+
+        There are typically three sources for video drivers: 
+            1) those from the card manufacturer's website
+            2) those from the chip manufacturer's website 
+                ("reference" drivers for the chip that powers the card)
+            3) those that shipped with Windows
+
+        Give them all a shot.  Track down every driver you can find for
+        your card, and try it.  If your card isn't top-of-the-line, try 
+        uninstalling your driver and use Windows Update to install the 
+        drive that came with Windows (especially if it's a Voodoo card).  
+        If it is top-of-the-line, try the various drivers available on
+        the card or chip manufacturer's website.  Try the most recent 
+        *certified* drivers first, as these have been tested the most
+        thoroughly; if that doesn't work, try the "beta" (pre-release)
+        driver, in case they've fixed the problem that's hampering you
+        right now.  However, it's sometimes even more common to see 
+        "broken" (buggy) beta drivers (ahem, nVidia!) that don't work, 
+        than to see stable beta drivers that have fixed old problems.
+                        
+        Here is a list of some common card/chip manufacturers and where 
+        to get their drivers:
+            [ <A HREF="http://www.matrox.com/mga/support/drivers/home.cfm">Matrox</A>   ]
+            [ <A HREF="http://www.nvidia.com/view.asp?PAGE=drivers">nVidia</A>   ]
+            [ <A HREF="http://www.3dfx.com/">3dfx</A> (voodoo cards) - remnants of a home page ]
+            [ <A HREF="http://www.voodoofiles.com/">voodoofiles.com</A> - your best bet for 3dfx drivers & support ]
+            [ <A HREF="http://www.diamondmm.com/default.asp?menu=support&submenu=Legacy_Graphics">Diamond</A>  ]
+            [ <A HREF="http://www.creative.com/">Creative</A> ]
+            [ <A HREF="http://www.tridentmicro.com/drivers/index.html">Trident</A>  ]
+            [ <A HREF="http://www.ati.com/">ATI</A>      ] (requires javascript. click 'technical support' 
+                in the lower left, then 'find a driver')
+        
+        Here are some sites that mirror (or link to) drivers from many sources:
+            [ <A HREF="http://winfiles.cnet.com/">CNET</A> ] (then click 'Utilities & Drivers', then 'Display & Video')
+            [ <A HREF="http://www.driverzone.com/video.html">Driverzone.com</A> ]
+    
+
+
+
+<A NAME="#ki">
+<B>7. Known Issues</B>
+---------------
+    (none so far)
+
+
+
+<A NAME="#linein">
+<B>8. Using Line-In</B>
+-----------------------
+    If you want to use your sound card's Line-In or CD Audio inputs for
+    sound data (instead of mp3 files), you can do this; in fact, this
+    will work for any viz plugin, not just this one!  Do the following:
+        
+        <U>1) CONNECT WIRES</U>
+            Connect your audio source (a stereo, a live feed, whatever) into
+            the line-in (or microphone) 1/8" (headphone-size) jack on your 
+            sound card.  You might want to test & verify that your cable is 
+            good before doing this.
+        
+        <U>2) SELECT SOUND INPUT CHANNEL & ADJUST VOLUME</U>
+            In Windows, double-click the speaker icon in your systray (where
+            the clock is).  Then, on the menu, go to Options -> Properties
+            and select the "Recording" option.  Then make sure the Line In
+            (or Microphone) input channel (whichever is appropriate for
+            your case) is SELECTED (with a check mark) and that the volume 
+            is close to, or at, the maximum.  Hit OK.           
+        
+        <U>3) TELL WINAMP TO USE LINE-IN</U>
+            Open Winamp, and hit CTRL+L (the "Open Location" hotkey).  Now
+            type in "linein://" as the location you want to open.  (Leave out
+            the quotes and make sure you use FORWARD slashes.)  Hit PLAY
+            ('x' key for the lazy), and the little built-in oscilloscope (or 
+            spectrum analyzer) in Winamp should start showing your signal.
+            If the signal looks flattish, you might want to double-check the 
+            volume from Windows' Volume Control, or adjust the sound level 
+            at the (physical) source.
+                
+        <U>4) RUN MONKEY</U>
+            Run Monkey as usual.  If the waves are too small or large, 
+            either adjust the volume from Windows' Volume Control, or adjust
+            the sound level at the source.       
+
+
+
+<A NAME="#other">
+<B>9. Other Tips</B>
+-----------------------
+    1. In general, it's a very good idea to use only Microsoft-certified 
+        WHQL (Windows Hardware Quality Labs) drivers for your video card.
+        Often people want to get the newest, fastest beta drivers, but 
+        these drivers are almost ALWAYS riddled with new bugs.
+
+    2. For the best graphics performance, try to close as many other 
+        applications as you can, before running the plugin, especially 
+        those that tend to work in the background, such as anti-virus 
+        or file-swapping software.  Also, if you must leave other 
+        applications open, try to minimize them (i.e. shrink the window 
+        down to the taskbar) so that they stay out of the painting loop.
+
+    3. Multiple Monitors: It is recommended that whenever you modify your Windows
+        multimon setup (i.e. turn an adapter on/off, change its color depth, etc.)
+        that you reboot Windows before running this plugin.  
+   
+
+
+
+<A NAME="#verhist">
+<B>10. Version History</B>
+-----------------------
+1.02 - 16 Dec 2002
+    -added save/load state feature!  Now you can press 'M##' (where ## is 
+        a two-digit code from 00-99) to save the current state to disk.
+        To recall it later, simply enter the two-digit code (##) and you'll
+        come back to the same tunnel you were in before.
+    -added stereo 3D; press F6 to cycle through modes.
+        -the first 3D mode creates a red-blue stereo-separated image,
+            so you'll need glasses with colored lenses to view it.
+            (get them for free from http://www.rainbowsymphony.com/freestuff.html )
+        -the second 3D mode is "Chromadepth" ( http://www.chromatek.com/ );
+            these glasses make reds appear in the foreground, greens in the middle,
+            and blues in the background.
+        -you can adjust the stereo separation (tweak the depth perception)
+            by the 'y' and 'Y' keys (y=less, Y=more depth).        
+    -memory:
+        -dropped memory footprint from about 27MB (ugh!) to 18 MB, after
+            realizing how much of a RAM hog monkey was.  It turns out,
+            I'd experimented with ultra-high-quality meshes in the past,
+            but had forgotten to undo all my changes, so the index & vertex
+            buffers I was allocating were still 4X bigger than they had
+            to be.  That's fixed now.
+        -added a feature to 'use smaller textures' to the config panel.
+            This will scale the textures used down to 256x256 (from 512x512),
+            resulting in less consumption of video memory (and system memory,
+            since the bitmaps are mirrored by D3D) and it will render faster
+            (but only noticeably on older cards).  However, the textures will
+            lose their crispness when this option is used.
+    -increased amount that the lookat vector is allowed to drift by
+        by 50%.
+    -increased default beat sensitivity by about 12%
+    -slightly increased freq. of changes in bending direction
+    -added side views + FOV shift on the beats
+    -fixed tab order.
+    -fixed rolling effect when in Desktop Mode, with winamp paused,
+        and user dragged icons around.
+    -decreased amount of CPU used to secure steady framerates
+        (thanks to VMS update to use timeBeginPeriod and timeEndPeriod,
+        which decreases Sleep() granularity from ~10ms to 1-2 ms)
+
+1.01 - 29 Oct 2002
+    -Upgraded to VMS 1.04
+        -Monkey supports Desktop Mode!
+        -Monkey now remembers the window position when you last 
+            (successfully) exited windowed mode, and uses that as the
+            default when you re-enter windowed mode (during the same
+            session or in a later session).  If there is an error creating
+            that window (too big/not enough video memory, off-screen
+            because display mode resolution decreased, etc.) it will
+            revert to the default window size & position.
+        -Config Panel:
+            -For users with DualHead cards that run two monitors as one 
+                virtual display (e.g. 2048x768 or 1024x1536), you can now
+                specify which half of the screen you want Fake Fullscreen Mode
+                and Desktop Mode to occupy, or both.  See the 'DualHead'
+                button on the config panel.
+            -Added an option to save cpu usage by using a more-tolerant
+                framerate limitation algorithm - saves 0-20%.  Default: OFF
+                (because Monkey typically likes to have very smooth animation).
+        -Fixed appearance of the help screen by adding +0.5-texel offset; 
+            on some cards, help screen text was kind of jaggy and munged.
+        -Monkey now has an Uninstaller!
+    -Added button to config panel that links to webpage
+    -Added 'animation speed' slider to config panel
+
+1.0 - 25 Sept 2002
+    -Initial worthwhile release.
+
+
+</PRE>
+</HTML>

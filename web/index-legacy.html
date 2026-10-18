@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monkey (WebGL port)</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#fff}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #ui{position:fixed;left:12px;top:12px;max-width:340px;padding:10px 12px;background:rgba(0,0,0,.55);border-radius:8px;backdrop-filter:blur(4px)}
+  #ui button,#ui label.btn{display:inline-block;margin:2px 4px 2px 0;padding:5px 10px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer;font:inherit}
+  #ui button:hover,#ui label.btn:hover{background:rgba(255,255,255,.22)}
+  #ui input[type=file]{display:none}
+  #hint{opacity:.75;margin-top:6px;font-size:12px}
+  #stat{position:fixed;right:12px;bottom:10px;opacity:.6;font-size:12px}
+  .hide{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <b>Monkey</b> &nbsp;<span style="opacity:.7">WebGL port of Ryan Geiss's 2002 Winamp visualizer (look-alike)</span><br>
+  <button id="bMic">Microphone</button>
+  <button id="bTab">Tab / system audio</button>
+  <label class="btn">Audio file<input id="fFile" type="file" accept="audio/*"></label>
+  <button id="bDemo">Demo beat</button>
+  <div id="hint">Keys: <b>H</b> hide this panel · <b>R</b> new tunnel · <b>W</b> wireframe on/off · <b>F</b> flat/smooth shading · <b>T</b> textures · <b>B</b> smoke layer (with T) · <b>, / .</b> fog distance · <b>+ / −</b> speed · <b>[ / ]</b> field of view · <b>Space</b> pause · <b>Enter</b> fullscreen</div>
+  <audio id="aud" controls class="hide" style="width:100%;margin-top:6px"></audio>
+</div>
+<div id="stat"></div>
+<script src="mc-table.js"></script>
+<script src="monkey-core.js"></script>
+<script>
+(function () {
+  'use strict';
+  var C = MonkeyCore;
+  var canvas = document.getElementById('c');
+  var gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+  if (!gl) { document.body.innerHTML = '<p style="padding:2em">WebGL2 is required.</p>'; return; }
+
+  // ---------- shaders ----------
+  var VS = '#version 300 es\n' +
+    'in vec3 aPos; in vec3 aNrm; uniform mat4 uView, uProj; out vec3 vWorld; out vec3 vView; out vec3 vBary; out vec3 vNrm;\n' +
+    'void main(){ vec4 v = uView*vec4(aPos,1.0); vWorld=aPos; vView=v.xyz; vNrm=mat3(uView)*aNrm; int k=gl_VertexID%3;\n' +
+    ' vBary = vec3(k==0?1.0:0.0, k==1?1.0:0.0, k==2?1.0:0.0); gl_Position = uProj*v; }';
+  var FS = '#version 300 es\nprecision highp float;\n' +
+    'in vec3 vWorld; in vec3 vView; in vec3 vBary; in vec3 vNrm; out vec4 o;\n' +
+    'uniform vec3 uFog, uK1, uK2; uniform float uFogEnd; uniform vec3 uL1, uL2;\n' +
+    'uniform float uWire, uFlat, uTexOn, uSmoke; uniform sampler2D uTex0, uTex1;\n' +
+    'void main(){\n' +
+    ' vec3 nf = normalize(cross(dFdx(vView), dFdy(vView)));\n' +
+    ' vec3 n = uFlat > 0.5 ? nf : normalize(vNrm);\n' +
+    ' if (dot(n, vView) > 0.0) n = -n;               // face the camera\n' +
+    ' float d1 = max(0.0, dot(n, uL1)), d2 = max(0.0, dot(n, uL2));\n' +
+    ' vec3 zz = vWorld;\n' +
+    ' vec3 base = vec3(177.0 + 13.0*sin(zz.z*0.9 + zz.x*4.0), 173.0 + 12.0*sin(zz.z*0.7 + zz.y*4.0 + 1.0), 168.0 + 11.0*sin(zz.z*1.1 - zz.x*3.0 + 2.0))/255.0;\n' +
+    ' vec3 col = min(vec3(1.0), base * (0.22 + 1.1*d1*uK1 + 0.9*d2*uK2));\n' +
+    ' if (uTexOn > 0.5) {  // planar projection along the tunnel axis, as in the original (u from x, v from y)\n' +
+    '   vec2 uv = vec2(vWorld.x + vWorld.z/96.0 + 0.0104*sin(vWorld.z*0.6 + vWorld.x*3.0), vWorld.y);\n' +
+    '   float t = texture(uTex0, uv).r;\n' +
+    '   col = min(vec3(1.0), col * (0.3 + 1.5*t));\n' +
+    '   if (uSmoke > 0.5) col = min(vec3(1.0), col + texture(uTex1, vWorld.xy).rgb*0.45);\n' +
+    ' }\n' +
+    ' float fg = clamp(-vView.z / uFogEnd, 0.0, 1.0);\n' +
+    ' vec3 dark = col*0.10;\n' +
+    ' vec3 fb = fwidth(vBary); vec3 a = smoothstep(vec3(0.0), fb*1.2, vBary);\n' +
+    ' float edge = (1.0 - min(min(a.x,a.y),a.z)) * uWire * (1.0 - smoothstep(0.25, 0.9, fg));  // wires dissolve into the fog\n' +
+    ' col = mix(col, dark, edge);\n' +
+    ' col = mix(col, uFog, fg);\n' +
+    ' o = vec4(col, 1.0);\n' +
+    '}';
+  function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+  var prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.bindAttribLocation(prog, 0, 'aPos'); gl.bindAttribLocation(prog, 1, 'aNrm'); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  var U = {}; ['uView', 'uProj', 'uFog', 'uK1', 'uK2', 'uFogEnd', 'uL1', 'uL2', 'uWire', 'uFlat', 'uTexOn', 'uSmoke', 'uTex0', 'uTex1'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+
+
+  // ---------- textures (supertex_a1-a5 detail maps, supertex_b1-b2 smoke) ----------
+  var texA = [], texB = [];
+  function makeTex(url, into) {
+    var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([200, 200, 200, 255]));
+    into.push(t);
+    var im = new Image();
+    im.onload = function () {
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    };
+    im.src = url;
+  }
+  for (var ti = 1; ti <= 5; ti++) makeTex('tex/supertex_a' + ti + '.jpg', texA);
+  for (ti = 1; ti <= 2; ti++) makeTex('tex/supertex_b' + ti + '.jpg', texB);
+  gl.uniform1i(U.uTex0, 0); gl.uniform1i(U.uTex1, 1);
+  // The original picks a random style when a segment is generated: style1 (0-4) selects the detail texture, style2 (0-1) the smoke layer.
+  function updateStyle(dt, bassLevel) {
+    var rate = 0.12 + 0.6 * bassLevel;                       // expected style1 changes per second (a guess: audio makes it busier)
+    if (Math.random() < rate * dt) style1 = (Math.random() * 5) | 0;
+    if (Math.random() < 0.3 * rate * dt) style2 = Math.random() < 0.5 ? 0 : 1;
+  }
+
+  // ---------- math ----------
+  function norm(v) { var l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
+  function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  // Left-handed look-at that maps the view direction to -z (so GL clip space works), matching the D3D look of the original.
+  function lookAt(eye, target, up) {
+    var f = norm([target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]]);
+    var r = norm(cross(up, f)), u = cross(f, r);
+    return { m: new Float32Array([r[0], u[0], -f[0], 0, r[1], u[1], -f[1], 0, r[2], u[2], -f[2], 0, -dot(r, eye), -dot(u, eye), dot(f, eye), 1]), f: f, r: r, u: u };
+  }
+  function perspective(fovy, aspect, n, f) {
+    var t = 1 / Math.tan(fovy / 2);
+    return new Float32Array([t / aspect, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0]);
+  }
+  function viewDir(v, d) { return [v[0] * d[0] + v[4] * d[1] + v[8] * d[2], v[1] * d[0] + v[5] * d[1] + v[9] * d[2], v[2] * d[0] + v[6] * d[1] + v[10] * d[2]]; }
+
+  // ---------- state ----------
+  var tunnel, pal, chunks, dist, speedScale = 1, fov = 75, wire = 1, flat = 0, fogScale = 1, texOn = 0, smoke = 0, style1 = 0, style2 = 0, paused = false, seed = 1;
+  function reset(newSeed) {
+    seed = newSeed;
+    for (var k in (chunks || {})) { gl.deleteBuffer(chunks[k].buf); gl.deleteVertexArray(chunks[k].vao); }
+    tunnel = new C.Tunnel({ seed: seed });
+    pal = new C.Palette(); for (var i = 0; i < 40; i++) pal.step(0.17);
+    chunks = {}; dist = 0;
+  }
+  reset(1 + Math.floor(Math.random() * 100000));
+
+  function buildChunk(k) {
+    var m = tunnel.buildChunkN(k), nv = m.pos.length / 3, il = new Float32Array(nv * 6);
+    for (var q = 0; q < nv; q++) { il[q * 6] = m.pos[q * 3]; il[q * 6 + 1] = m.pos[q * 3 + 1]; il[q * 6 + 2] = m.pos[q * 3 + 2]; il[q * 6 + 3] = m.nrm[q * 3]; il[q * 6 + 4] = m.nrm[q * 3 + 1]; il[q * 6 + 5] = m.nrm[q * 3 + 2]; }
+    var vao = gl.createVertexArray(), buf = gl.createBuffer();
+    gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, il, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+    chunks[k] = { vao: vao, buf: buf, n: nv, s1: style1, s2: style2 };
+  }
+  var AHEAD = 34;
+  function manageChunks(budget) {
+    var c0 = Math.floor(dist), k;
+    for (k = c0 - 2; k < c0 + AHEAD && budget > 0; k++) if (k >= 0 && !chunks[k]) { buildChunk(k); budget--; }
+    for (var key in chunks) if (+key < c0 - 3) { gl.deleteBuffer(chunks[key].buf); gl.deleteVertexArray(chunks[key].vao); delete chunks[key]; }
+  }
+
+  // ---------- audio ----------
+  var actx = null, analyser = null, fbuf = null, srcNode = null, demo = true;
+  var bass = 0, bassSlow = 0, energy = 0;
+  function ensureAudio() { if (!actx) { actx = new (window.AudioContext || window.webkitAudioContext)(); analyser = actx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.6; fbuf = new Uint8Array(analyser.frequencyBinCount); } if (actx.state === 'suspended') actx.resume(); }
+  function useStream(stream) { ensureAudio(); if (srcNode) srcNode.disconnect(); srcNode = actx.createMediaStreamSource(stream); srcNode.connect(analyser); demo = false; }
+  document.getElementById('bMic').onclick = function () { navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(useStream).catch(function (e) { alert('Microphone unavailable: ' + e.message); }); };
+  document.getElementById('bTab').onclick = function () { navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(function (s) { if (!s.getAudioTracks().length) { alert('No audio shared. Tick "Share tab audio" in the picker.'); return; } useStream(s); }).catch(function (e) { alert('Capture unavailable: ' + e.message); }); };
+  document.getElementById('bDemo').onclick = function () { demo = true; };
+  var aud = document.getElementById('aud');
+  document.getElementById('fFile').onchange = function (e) {
+    var f = e.target.files[0]; if (!f) return; ensureAudio();
+    aud.src = URL.createObjectURL(f); aud.classList.remove('hide');
+    if (!aud._wired) { var s = actx.createMediaElementSource(aud); s.connect(analyser); analyser.connect(actx.destination); aud._wired = true; }
+    demo = false; aud.play();
+  };
+  var tAudio = 0;
+  function sampleAudio(dt) {
+    var b = 0, e = 0;
+    if (demo || !analyser) {
+      tAudio += dt; var beat = Math.pow(Math.max(0, Math.sin(tAudio * Math.PI * 2 * 1.9)), 6); // ~114 bpm
+      b = 0.25 + 0.6 * beat; e = 0.35 + 0.25 * Math.sin(tAudio * 0.4);
+    } else {
+      analyser.getByteFrequencyData(fbuf);
+      var s = 0, i; for (i = 1; i < 9; i++) s += fbuf[i]; b = Math.pow(s / 8 / 255, 1.6) * 1.6;
+      var t = 0; for (i = 9; i < 160; i++) t += fbuf[i]; e = t / 151 / 255;
+    }
+    bass += (b - bass) * Math.min(1, dt * 14);
+    bassSlow += (b - bassSlow) * Math.min(1, dt * 2);
+    energy += (e - energy) * Math.min(1, dt * 4);
+  }
+
+  // ---------- input ----------
+  var ui = document.getElementById('ui');
+  addEventListener('keydown', function (e) {
+    var k = e.key.toLowerCase();
+    if (k === 'h') ui.classList.toggle('hide');
+    else if (k === 'r') reset(1 + Math.floor(Math.random() * 100000));
+    else if (k === 'w') wire = 1 - wire;
+    else if (k === 'f') flat = 1 - flat;
+    else if (k === '+' || k === '=') speedScale = Math.min(4, speedScale * 1.15);
+    else if (k === '-' || k === '_') speedScale = Math.max(0.2, speedScale / 1.15);
+    else if (k === 't') texOn = 1 - texOn;
+    else if (k === 'b') smoke = 1 - smoke;
+    else if (k === ',') fogScale = Math.max(0.2, fogScale / 1.2);
+    else if (k === '.') fogScale = Math.min(4, fogScale * 1.2);
+    else if (k === '[') fov = Math.max(30, fov - 3);
+    else if (k === ']') fov = Math.min(120, fov + 3);
+    else if (k === ' ') { paused = !paused; e.preventDefault(); }
+    else if (k === 'enter') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
+  });
+
+  // ---------- frame loop ----------
+  var last = performance.now(), palAcc = 0, tTotal = 0, fpsAcc = 0, fpsN = 0, stat = document.getElementById('stat');
+  function resize() { var d = Math.min(window.devicePixelRatio || 1, 2); var w = Math.floor(innerWidth * d), h = Math.floor(innerHeight * d); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } }
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now; resize();
+    sampleAudio(dt);
+    if (!paused) updateStyle(dt, bass);
+    if (!paused) {
+      tTotal += dt;
+      var speed = speedScale * (0.2 + 0.95 * bass + 0.3 * energy);      // chunks per second (a guess; the original's calibration is not recovered)
+      dist += speed * dt;
+      palAcc += dt;
+      while (palAcc > 1 / 30) { palAcc -= 1 / 30; pal.step(0.02 + 0.03 * speed); }
+    }
+    manageChunks(dist < 1 ? 40 : 3);
+
+    var cam = C.cameraAt(tunnel, dist, 2.5);
+    var roll = 0.12 * Math.sin(tTotal * 0.31) + 0.05 * Math.sin(tTotal * 0.83);
+    var up = [Math.sin(roll), Math.cos(roll), 0];
+    var V = lookAt(cam.eye, cam.target, up);
+    var P = perspective(fov * Math.PI / 180 * (1 + 0.08 * bass), canvas.width / canvas.height, 0.02, 40);
+    var fog = [pal.c[0] / 255, pal.c[1] / 255, pal.c[2] / 255];
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(fog[0], fog[1], fog[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.uniformMatrix4fv(U.uView, false, V.m); gl.uniformMatrix4fv(U.uProj, false, P);
+    gl.uniform3fv(U.uFog, fog);
+    gl.uniform3f(U.uK1, 0.55 + 0.45 * fog[0], 0.55 + 0.45 * fog[1], 0.55 + 0.45 * fog[2]);
+    gl.uniform3f(U.uK2, 0.35 + 0.65 * (1 - fog[0]), 0.35 + 0.65 * (1 - fog[1]), 0.35 + 0.65 * (1 - fog[2]));
+    var L1 = norm([-0.3, 0.8, -0.5]), L2 = norm([0.4, -0.7, -0.4]);
+    // lights are given in view space, as in the preview (+z toward the scene); our view space looks down -z
+    gl.uniform3f(U.uL1, L1[0], L1[1], -L1[2]); gl.uniform3f(U.uL2, L2[0], L2[1], -L2[2]);
+    // original: 31.02 + 0.99*(sin+sin); our world is thinner/longer than it looks, so the default is much shorter (adjust with , .)
+    var fe = 11.0 + 1.6 * (Math.sin(tTotal * 0.0219 * 30 + 0.66 * pal.phase) + Math.sin(tTotal * 0.01513 * 30 + 0.29 * pal.phase));
+    gl.uniform1f(U.uFogEnd, Math.max(3, fe * fogScale));
+    gl.uniform1f(U.uWire, wire); gl.uniform1f(U.uFlat, flat);
+    gl.uniform1f(U.uTexOn, texOn); gl.uniform1f(U.uSmoke, smoke);
+    var tris = 0, boundA = -1, boundB = -1;
+    for (var k in chunks) { var ch = chunks[k];
+      if (texOn) {
+        if (ch.s1 !== boundA) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA[ch.s1]); boundA = ch.s1; }
+        if (smoke && ch.s2 !== boundB) { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB[ch.s2]); boundB = ch.s2; }
+      }
+      gl.bindVertexArray(ch.vao); gl.drawArrays(gl.TRIANGLES, 0, ch.n); tris += ch.n / 3; }
+
+    fpsAcc += dt; fpsN++;
+    if (fpsAcc > 0.5) { stat.textContent = Math.round(fpsN / fpsAcc) + ' fps · ' + Math.round(tris / 1000) + 'k tris · seed ' + seed + (demo ? ' · demo beat' : ' · live audio'); fpsAcc = 0; fpsN = 0; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monkey (WebGL port)</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#fff}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #ui{position:fixed;left:12px;top:12px;max-width:350px;padding:10px 12px;background:rgba(0,0,0,.55);border-radius:8px;backdrop-filter:blur(4px)}
+  #ui button,#ui label.btn{display:inline-block;margin:2px 4px 2px 0;padding:5px 10px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer;font:inherit}
+  #ui button:hover,#ui label.btn:hover{background:rgba(255,255,255,.22)}
+  #ui input[type=file]{display:none}
+  #hint{opacity:.75;margin-top:6px;font-size:12px}
+  #stat{position:fixed;right:12px;bottom:10px;opacity:.6;font-size:12px}
+  .hide{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <b>Monkey</b> &nbsp;<span style="opacity:.7">WebGL port of Ryan Geiss's 2002 Winamp visualizer</span><br>
+  <button id="bMic">Microphone</button>
+  <button id="bTab">Tab audio</button>
+  <label class="btn">Audio file<input id="fFile" type="file" accept="audio/*"></label>
+  <button id="bDemo">Demo audio</button>
+  <div id="hint">Keys: <b>I</b> hide panel · <b>R</b> new tunnel · <b>W</b> wireframe · <b>D</b> darkness · <b>U</b> underground (with wireframe) · <b>H</b> hair · <b>E</b> errors (with flat) · <b>G</b> fog · <b>F</b> flat/smooth · <b>T</b> textures · <b>+ / −</b> speed · <b>[ / ]</b> zoom · <b>Space</b> pause · <b>Enter</b> fullscreen</div>
+  <audio id="aud" controls class="hide" style="width:100%;margin-top:6px"></audio>
+</div>
+<div id="stat"></div>
+<script src="mc-table.js"></script>
+<script src="monkey-color-gen.js"></script>
+<script src="monkey-orig.js"></script>
+<script>
+(function () {
+  'use strict';
+  var canvas = document.getElementById('c');
+  var gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
+  if (!gl) { document.body.innerHTML = '<p style="padding:2em">WebGL2 is required.</p>'; return; }
+
+  // ---------- shaders ----------
+  var VS = '#version 300 es\n' +
+    'in vec3 aPos; in vec3 aCol; in vec3 aColF; uniform mat4 uW; uniform vec4 uP; uniform float uFlat; out vec3 vLocal; out vec3 vView; out vec3 vCol;\n' +
+    'void main(){ vec4 v = uW*vec4(aPos,1.0); vLocal=aPos; vView=v.xyz; vCol = uFlat > 0.5 ? aColF : aCol;\n' +
+    ' gl_Position = vec4(uP.x*v.x, uP.y*v.y, uP.z*v.z+uP.w, v.z); }';
+  // The original bakes lighting into per-vertex colours (see monkey-orig.js vertexColors); the pixel stage only modulates by the texture and fogs.
+  var FS = '#version 300 es\nprecision highp float;\n' +
+    'in vec3 vLocal; in vec3 vView; in vec3 vCol; out vec4 o;\n' +
+    'uniform vec3 uFog; uniform float uFogEnd, uFogOn, uTexOn, uSegN, uDark; uniform sampler2D uTex0;\n' +
+    'void main(){\n' +
+    ' vec3 col = uDark > 0.5 ? vec3(0.0) : vCol;   // darkness: the solid pass is drawn black (no texture)\n' +
+    ' if (uTexOn > 0.5 && uDark < 0.5) {\n' +
+    '   vec2 uv = vec2(vLocal.x*0.5 + 0.5 + (mod(uSegN,96.0) + vLocal.z)/96.0, vLocal.y*0.5 + 0.5);\n' +
+    '   col *= texture(uTex0, uv).r;\n' +
+    ' }\n' +
+    ' float fg = uFogOn > 0.5 ? clamp(vView.z / uFogEnd, 0.0, 1.0) : 0.0;\n' +
+    ' col = mix(col, uFog, fg);\n' +
+    ' o = vec4(col, 1.0);\n' +
+    '}';
+  function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+  var prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.bindAttribLocation(prog, 0, 'aPos'); gl.bindAttribLocation(prog, 1, 'aCol'); gl.bindAttribLocation(prog, 2, 'aColF'); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  // wire pass: edges of the same mesh, displaced along the vertex normal (-f*(nx,ny,2nz)); f = 0.002, or in the 'underground' style 10x / -3x a varying base
+  var VSW = '#version 300 es\n' +
+    'in vec3 aPos; in vec3 aNrm; uniform mat4 uW; uniform vec4 uP; uniform float uBase, uMean, uUnder; out float vZ;\n' +
+    'void main(){ float f = uUnder > 0.5 ? ((aNrm.z - uMean - 0.21 < 0.0) ? -3.0*uBase : 10.0*uBase) : 0.002;\n' +
+    ' vec4 v = uW*vec4(aPos - vec3(f*aNrm.x, f*aNrm.y, 2.0*f*aNrm.z), 1.0); vZ = v.z; gl_Position = vec4(uP.x*v.x, uP.y*v.y, uP.z*v.z+uP.w, v.z); }';
+  var FSW = '#version 300 es\nprecision highp float;\nin float vZ; out vec4 o; uniform vec3 uFog, uWireCol; uniform float uFogEnd, uFogOn, uAlpha;\n' +
+    'void main(){ o = vec4(mix(uWireCol, uFog, uFogOn > 0.5 ? clamp(vZ / uFogEnd, 0.0, 1.0) : 0.0), uAlpha); }';
+  var progW = gl.createProgram(); gl.attachShader(progW, sh(gl.VERTEX_SHADER, VSW)); gl.attachShader(progW, sh(gl.FRAGMENT_SHADER, FSW));
+  gl.bindAttribLocation(progW, 0, 'aPos'); gl.bindAttribLocation(progW, 1, 'aNrm'); gl.linkProgram(progW);
+  if (!gl.getProgramParameter(progW, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(progW));
+  var UW = {}; ['uW', 'uP', 'uBase', 'uMean', 'uUnder', 'uFog', 'uWireCol', 'uFogEnd', 'uFogOn', 'uAlpha'].forEach(function (n) { UW[n] = gl.getUniformLocation(progW, n); });
+  gl.useProgram(prog);
+  var U = {}; ['uW', 'uP', 'uFog', 'uFogEnd', 'uFogOn', 'uFlat', 'uTexOn', 'uSegN', 'uDark', 'uTex0'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+  gl.uniform1i(U.uTex0, 0);
+
+  // ---------- textures ----------
+  var texA = [];
+  function makeTex(url, into) {
+    var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([200, 200, 200, 255])); into.push(t);
+    var im = new Image();
+    im.onload = function () {
+      gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    };
+    im.src = url;
+  }
+  for (var ti = 1; ti <= 5; ti++) makeTex('tex/supertex_a' + ti + '.jpg', texA);
+
+  // ---------- scene (the original's simulation, ticked at 30 Hz) ----------
+  var O, seed, buffers, prevCam, curCam, tickAcc = 0, tickTime = 0;
+  var wire = (location.hash.indexOf("wire") >= 0 ? 1 : 0), flat = 0, dark = (location.hash.indexOf("dark") >= 0 ? 1 : 0), under = (location.hash.indexOf("under") >= 0 ? 1 : 0), hair = (location.hash.indexOf("hair") >= 0 ? 1 : 0), errors = 0, fogOn = (location.hash.indexOf("nofog") >= 0 ? 0 : 1), texOn = (location.hash.indexOf("notex") >= 0 ? 0 : 1), paused = false, speedScale = 1, zoomScale = 1;
+  function freeSeg(b) { gl.deleteBuffer(b.buf); gl.deleteVertexArray(b.vao); gl.deleteBuffer(b.wbuf); gl.deleteVertexArray(b.wvao); gl.deleteBuffer(b.hbuf); gl.deleteVertexArray(b.hvao); }
+  function reset(newSeed) {
+    seed = newSeed; for (var k in (buffers || {})) freeSeg(buffers[k]);
+    buffers = {}; O = new MonkeyOrig.Original(seed); O.seedAvg = true; prevCam = curCam = null; tickTime = 0;
+    for (var i = 0; i < 3; i++) { prevCam = curCam; curCam = O.frame(false); }   // let the smoothing settle
+    prevCam = curCam;
+  }
+  function segBuffer(seg) {                 // expand to non-indexed triangles carrying the original's baked per-vertex colours
+    var m = seg.mesh, p = m.pos, c = m.col, ix = m.idx, nt = ix.length / 3, out = new Float32Array(nt * 3 * 9), t, k, i;
+    for (t = 0; t < nt; t++) {
+      var f = ix[3 * t] * 3;
+      for (k = 0; k < 3; k++) {
+        var o = ix[3 * t + k] * 3, w = (t * 3 + k) * 9;
+        out[w] = p[o]; out[w + 1] = p[o + 1]; out[w + 2] = p[o + 2];
+        out[w + 3] = c[o] / 255; out[w + 4] = c[o + 1] / 255; out[w + 5] = c[o + 2] / 255;
+        out[w + 6] = c[f] / 255; out[w + 7] = c[f + 1] / 255; out[w + 8] = c[f + 2] / 255;
+      }
+    }
+    var vao = gl.createVertexArray(), buf = gl.createBuffer();
+    gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, out, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 36, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 36, 24);
+    // wire pass geometry: every edge once, with the vertex normal (the shader displaces the vertices)
+    var seen = new Set(), wl = [], nrm = m.nrm, e;
+    function edge(a, b) { var key = a < b ? a * 65536 + b : b * 65536 + a; if (seen.has(key)) return; seen.add(key); for (var q = 0; q < 2; q++) { var o = (q ? b : a) * 3; wl.push(p[o], p[o + 1], p[o + 2], nrm[o], nrm[o + 1], nrm[o + 2]); } }
+    for (t = 0; t < nt; t++) { var a0 = ix[3 * t], b0 = ix[3 * t + 1], c0 = ix[3 * t + 2]; edge(a0, b0); edge(b0, c0); edge(c0, a0); }
+    var wvao = gl.createVertexArray(), wbuf = gl.createBuffer();
+    gl.bindVertexArray(wvao); gl.bindBuffer(gl.ARRAY_BUFFER, wbuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(wl), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+    var hv = m.hair, hl = new Float32Array(hv.length * 2), q;          // hair: (root, tip) pairs, zero normal (no displacement)
+    for (q = 0; q < hv.length / 3; q++) { hl[6 * q] = hv[3 * q]; hl[6 * q + 1] = hv[3 * q + 1]; hl[6 * q + 2] = hv[3 * q + 2]; }
+    var hvao = gl.createVertexArray(), hbuf = gl.createBuffer();
+    gl.bindVertexArray(hvao); gl.bindBuffer(gl.ARRAY_BUFFER, hbuf); gl.bufferData(gl.ARRAY_BUFFER, hl, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+    return { vao: vao, buf: buf, n: nt * 3, seg: seg, wvao: wvao, wbuf: wbuf, wn: wl.length / 6, hvao: hvao, hbuf: hbuf, hn: hv.length / 3 };
+  }
+
+  // ---------- audio ----------
+  // The original analyses 576 signed 8-bit waveform samples per frame (Winamp's waveformData) and detects beats itself (monkey-orig.js).
+  var actx = null, analyser = null, tbuf = null, srcNode = null, demo = true, tAudio = 0;
+  function ensureAudio() { if (!actx) { actx = new (window.AudioContext || window.webkitAudioContext)(); analyser = actx.createAnalyser(); analyser.fftSize = 2048; tbuf = new Uint8Array(analyser.fftSize); } if (actx.state === 'suspended') actx.resume(); }
+  function useStream(stream) { ensureAudio(); if (srcNode) srcNode.disconnect(); srcNode = actx.createMediaStreamSource(stream); srcNode.connect(analyser); setDemo(false); }
+  function setDemo(on) { demo = on; if (O) { O.initAudio(); O.seedAvg = true; } }
+  document.getElementById('bMic').onclick = function () { navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(useStream).catch(function (e) { alert('Microphone unavailable: ' + e.message); }); };
+  document.getElementById('bTab').onclick = function () { navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(function (s) { if (!s.getAudioTracks().length) { alert('No audio shared. Tick "Share tab audio" in the picker (Chrome/Edge).'); return; } useStream(s); }).catch(function (e) { alert('Capture unavailable: ' + e.message); }); };
+  document.getElementById('bDemo').onclick = function () { setDemo(true); };
+  var aud = document.getElementById('aud');
+  document.getElementById('fFile').onchange = function (e) {
+    var f = e.target.files[0]; if (!f) return; ensureAudio(); aud.src = URL.createObjectURL(f); aud.classList.remove('hide');
+    if (!aud._wired) { var s = actx.createMediaElementSource(aud); s.connect(analyser); analyser.connect(actx.destination); aud._wired = true; }
+    setDemo(false); aud.play();
+  };
+  // 576 signed samples of the most recent audio, resampled to the 44.1 kHz the original's band layout assumes
+  function liveWave() {
+    analyser.getByteTimeDomainData(tbuf);
+    var n = Math.min(tbuf.length - 2, Math.round(576 * actx.sampleRate / 44100)), w = new Array(576), i, base = tbuf.length - n - 1;
+    for (i = 0; i < 576; i++) { var p = base + (i + 0.5) * n / 576, k = Math.floor(p), fr = p - k; w[i] = Math.round((tbuf[k] * (1 - fr) + tbuf[k + 1] * fr) - 128); }
+    return w;
+  }
+  // built-in demo track: kick/snare/hat/bass over 8 s phrases with a breakdown, synthesised straight into the waveform
+  function demoWave(t0) {
+    var w = new Array(576), i;
+    for (i = 0; i < 576; i++) {
+      var t = t0 + i / 44100, bar = Math.floor(t / 2), ph = (t * 2) % 1, bi = Math.floor(t * 2);
+      var lvl = [1, 0.55, 1.25, 0.3][Math.floor(t / 8) % 4], h = Math.sin(bi * 12.9898) * 43758.5453; h -= Math.floor(h);
+      var kick = Math.exp(-ph * 10) * Math.sin(2 * Math.PI * (48 + 30 * Math.exp(-ph * 30)) * t) * (60 + 50 * h) * lvl;
+      var snare = (bi & 1) * Math.exp(-ph * 14) * Math.sin(t * 91234.5) * Math.cos(t * 7312.1) * 35 * lvl;
+      var hat = Math.exp(-((t * 4) % 1) * 20) * Math.sin(t * 131071.7) * Math.cos(t * 29311.3) * 18 * lvl;
+      var bass = Math.sin(2 * Math.PI * (55 + (bar % 4) * 7) * t) * 14 * lvl, mel = Math.sin(2 * Math.PI * (440 + 110 * (bi % 4)) * t) * 10 * (0.5 + 0.5 * Math.sin(t * 0.7));
+      w[i] = Math.max(-128, Math.min(127, Math.round(kick + snare + hat + bass + mel + (Math.random() - 0.5) * 4)));
+    }
+    return w;
+  }
+  function nextWave(dt) { if (demo || !analyser) { tAudio += dt; return demoWave(tAudio); } return liveWave(); }
+
+  // ---------- input ----------
+  var ui = document.getElementById('ui');
+  addEventListener('keydown', function (e) {
+    var k = e.key.toLowerCase();
+    if (k === 'i') ui.classList.toggle('hide');
+    else if (k === 'r') reset(1 + Math.floor(Math.random() * 100000));
+    else if (k === 'w') wire = 1 - wire; else if (k === 'f') flat = 1 - flat; else if (k === 'd') dark = 1 - dark; else if (k === 'u') under = 1 - under; else if (k === 'e') errors = 1 - errors; else if (k === 'g') fogOn = 1 - fogOn; else if (k === 'h') hair = 1 - hair;
+    else if (k === 't') texOn = 1 - texOn;
+    else if (k === '+' || k === '=') speedScale = Math.min(4, speedScale * 1.15);
+    else if (k === '-' || k === '_') speedScale = Math.max(0.1, speedScale / 1.15);
+    else if (k === '[') zoomScale = Math.min(2.5, zoomScale * 1.05); else if (k === ']') zoomScale = Math.max(0.5, zoomScale / 1.05);
+    else if (k === ' ') { paused = !paused; e.preventDefault(); }
+    else if (k === 'enter') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
+  });
+
+  // ---------- frame loop ----------
+  function lerpA(a, b, t) { var o = new Array(a.length); for (var i = 0; i < a.length; i++) o[i] = a[i] + (b[i] - a[i]) * t; return o; }
+  var last = performance.now(), fpsAcc = 0, fpsN = 0, stat = document.getElementById('stat');
+  function resize() { var d = Math.min(window.devicePixelRatio || 1, 2); var w = Math.floor(innerWidth * d), h = Math.floor(innerHeight * d); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } }
+  var TICK = 1 / 30;
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now; resize();
+    if (!paused) {
+      tickAcc += dt * speedScale;
+      var guard = 0;
+      while (tickAcc >= TICK && guard++ < 4) {
+        tickAcc -= TICK; tickTime += TICK;
+        prevCam = curCam; O.gFov = zoomScale; O.smoothBeat = true; O.camBeat = false; O.dark = dark; O.flat = flat; O.errors = errors; curCam = O.frame(nextWave(TICK));
+      }
+    }
+    var a = Math.min(1, tickAcc / TICK);
+    // keep GPU buffers for the live segments only
+    var cam = curCam, i, key;
+    for (i = 0; i < 34; i++) { var sg = cam.segs[i]; if (!buffers[sg.n]) buffers[sg.n] = segBuffer(sg); }
+    for (key in buffers) if (+key < cam.cs - 2) { freeSeg(buffers[key]); delete buffers[key]; }
+
+    var fog = [O.pal[0] / 255, O.pal[1] / 255, O.pal[2] / 255];
+    var aspect = canvas.width / canvas.height, fovX = lerpA([prevCam.fovY], [curCam.fovY], a)[0], fovY = fovX / aspect;
+    var zn = 0.1, zf = 34;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    if (!fogOn && dark) gl.clearColor(0, 0, 0, 1); else gl.clearColor(fog[0], fog[1], fog[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.depthFunc(gl.LESS); gl.useProgram(prog);
+    gl.uniform4f(U.uP, 1 / Math.tan(fovX / 2), 1 / Math.tan(fovY / 2), (zf + zn) / (zf - zn), -2 * zf * zn / (zf - zn));
+    gl.uniform3fv(U.uFog, fog);
+    var P = O.P, T = O.T;
+    gl.uniform1f(U.uFogEnd, 31.02 + 0.99 * (Math.sin(P * 0.66 + T * 0.0219) + Math.sin(P * 0.29 + T * 0.01513)));
+    gl.uniform1f(U.uFlat, flat); gl.uniform1f(U.uTexOn, texOn); gl.uniform1f(U.uDark, dark); gl.uniform1f(U.uFogOn, fogOn);
+    var tris = 0, boundA = -1, Ws = [];
+    for (i = 0; i < 34; i++) {
+      var s = cam.segs[i], b = buffers[s.n];
+      var pj = s.n - prevCam.segs[0].n, W = (pj >= 0 && pj < 34) ? lerpA(prevCam.W[pj], cam.W[i], a) : cam.W[i];
+      Ws.push(W); gl.uniformMatrix4fv(U.uW, false, new Float32Array(W)); gl.uniform1f(U.uSegN, s.n);
+      if (texOn > 0 && s.style1 !== boundA) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA[s.style1]); boundA = s.style1; }
+      gl.bindVertexArray(b.vao); gl.drawArrays(gl.TRIANGLES, 0, b.n); tris += b.n / 3;
+    }
+    if (wire || hair) {
+      gl.useProgram(progW); gl.depthFunc(gl.LEQUAL);
+      gl.uniform4f(UW.uP, 1 / Math.tan(fovX / 2), 1 / Math.tan(fovY / 2), (zf + zn) / (zf - zn), -2 * zf * zn / (zf - zn));
+      gl.uniform3fv(UW.uFog, fog); gl.uniform3fv(UW.uWireCol, O.wireColor(!!dark)); gl.uniform1f(UW.uUnder, under); gl.uniform1f(UW.uFogOn, fogOn); gl.uniform1f(UW.uAlpha, 1);
+      gl.uniform1f(UW.uFogEnd, 31.02 + 0.99 * (Math.sin(P * 0.66 + T * 0.0219) + Math.sin(P * 0.29 + T * 0.01513)));
+      if (wire) for (i = 0; i < 34; i++) {
+        var sw = cam.segs[i], bw = buffers[sw.n];
+        gl.uniformMatrix4fv(UW.uW, false, new Float32Array(Ws[i])); gl.uniform1f(UW.uBase, sw.mesh.wireBase); gl.uniform1f(UW.uMean, sw.mesh.meanNz);
+        gl.bindVertexArray(bw.wvao); gl.drawArrays(gl.LINES, 0, bw.wn);
+      }
+      if (hair) {     // hair pass: lines in the hair colour, alpha 0x58/255 (transparent_hair), source-alpha blending, no displacement
+        gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.uniform3fv(UW.uWireCol, O.hairColor()); gl.uniform1f(UW.uUnder, 0); gl.uniform1f(UW.uAlpha, 88 / 255); gl.uniform1f(UW.uBase, 0); gl.uniform1f(UW.uMean, 0);
+        for (i = 0; i < 34; i++) {
+          var sh_ = cam.segs[i], bh = buffers[sh_.n];
+          gl.uniformMatrix4fv(UW.uW, false, new Float32Array(Ws[i])); gl.bindVertexArray(bh.hvao); gl.drawArrays(gl.LINES, 0, bh.hn);
+        }
+        gl.disable(gl.BLEND);
+      }
+    }
+    fpsAcc += dt; fpsN++;
+    if (fpsAcc > 0.5) { stat.textContent = Math.round(fpsN / fpsAcc) + ' fps · ' + Math.round(tris / 100) / 10 + 'k tris · seed ' + seed + ((demo ? ' · demo audio' : ' · live audio') + ' · beats ' + (O.beatCount || 0)); fpsAcc = 0; fpsN = 0; }
+    requestAnimationFrame(frame);
+  }
+  var hs = /seed=(\d+)/.exec(location.hash); reset(hs ? +hs[1] : 1 + Math.floor(Math.random() * 100000));
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
